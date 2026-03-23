@@ -25,6 +25,7 @@ class OneTagger {
     afProviders: Ref<any[]> = ref([]);
     afSyncResult: Ref<any> = ref(null);
     afConnectionStatus: Ref<any> = ref(null);
+    afUnmatchedFiles: Ref<string[]> = ref([]);
     helpDialog: Ref<{ open: boolean, route?: string }> = ref({ open: false });
     folderBrowser: Ref<FolderBrowser> = ref(new FolderBrowser());
     taggerStatus: Ref<TaggerStatus> = ref(new TaggerStatus());
@@ -285,6 +286,11 @@ class OneTagger {
             case 'afCacheReset':
                 // Cache was reset, clear UI state
                 this.afSyncResult.value = null;
+                break;
+            case 'afUnmatchedFiles':
+                if (json.result && json.result.files) {
+                    this.afUnmatchedFiles.value = json.result.files;
+                }
                 break;
             // Folder browser
             case 'folderBrowser':

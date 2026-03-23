@@ -146,6 +146,15 @@
                             <div class='sync-stat-label'>Orphaned in Provider</div>
                         </div>
                     </div>
+                    <!-- Action buttons for sync results -->
+                    <div class='row justify-center q-mt-md q-gutter-sm' v-if='$1t.afSyncResult.value.unmatchedLocal > 0'>
+                        <q-btn
+                            outline color='warning'
+                            :label='`Auto Tag ${$1t.afSyncResult.value.unmatchedLocal} Unmatched Files`'
+                            icon='mdi-tag-multiple-outline'
+                            @click='autoTagUnmatched'
+                        />
+                    </div>
                 </div>
                 <div v-else>
                     <q-badge color='negative' class='q-pa-sm'>
@@ -415,6 +424,38 @@ function resetCache() {
         providerId: providerConfig.value.providerId,
     });
 }
+
+function autoTagUnmatched() {
+    // Request unmatched file list from backend
+    $1t.send('aFGetUnmatched', {
+        providerId: providerConfig.value.providerId,
+        path: providerConfig.value.path,
+        includeSubfolders: providerConfig.value.includeSubfolders,
+    });
+}
+
+// Watch for unmatched files to arrive, then navigate to autotagger with them
+watch(() => $1t.afUnmatchedFiles.value, (files) => {
+    if (files && files.length > 0) {
+        // Generate a virtual M3U playlist from the file paths
+        const m3u = '#EXTM3U\n' + files.join('\n');
+        const b64 = btoa(unescape(encodeURIComponent(m3u)));
+        const dataUri = `data:audio/x-mpegurl;base64,${b64}`;
+        
+        // Set as autotagger playlist
+        $1t.autoTaggerPlaylist.value = {
+            data: dataUri,
+            filename: 'unmatched_files.m3u',
+            format: 'm3u',
+        };
+        
+        // Clear the unmatched files so this doesn't fire again
+        $1t.afUnmatchedFiles.value = [];
+        
+        // Navigate to autotagger
+        $router.push('/autotagger');
+    }
+});
 
 function startProvider() {
     $1t.settings.value.audioFeatures.mode = 'provider';

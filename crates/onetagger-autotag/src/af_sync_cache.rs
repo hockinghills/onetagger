@@ -259,6 +259,32 @@ impl AFSyncCache {
         )?;
         Ok(())
     }
+
+    /// Get all matched file paths for a provider.
+    pub fn matched_paths(&self, provider_id: &str) -> Result<Vec<PathBuf>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT local_path FROM sync_map WHERE provider_id = ?1"
+        )?;
+        let rows = stmt.query_map(params![provider_id], |row| {
+            Ok(PathBuf::from(row.get::<_, String>(0)?))
+        })?;
+        let mut results = vec![];
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// Given a full list of file paths, return only those NOT in the sync cache
+    /// for the given provider. These are the unmatched files.
+    pub fn unmatched_from_list(&self, provider_id: &str, all_files: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
+        let matched = self.matched_paths(provider_id)?;
+        let matched_set: std::collections::HashSet<PathBuf> = matched.into_iter().collect();
+        Ok(all_files.iter()
+            .filter(|f| !matched_set.contains(*f))
+            .cloned()
+            .collect())
+    }
 }
 
 

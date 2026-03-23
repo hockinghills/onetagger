@@ -83,6 +83,9 @@ enum Action {
     /// Reset the sync cache for a provider
     #[serde(rename_all = "camelCase")]
     AFResetCache { provider_id: String },
+    /// Get unmatched files from sync cache (for feeding into autotag)
+    #[serde(rename_all = "camelCase")]
+    AFGetUnmatched { provider_id: String, path: PathBuf, include_subfolders: Option<bool> },
 
     TagEditorFolder { path: Option<String>, subdir: Option<String>, recursive: Option<bool>  },
     TagEditorLoad { path: PathBuf },
@@ -652,6 +655,38 @@ async fn handle_message(text: &str, websocket: &mut WebSocket, context: &mut Soc
                 "action": "afCacheReset",
                 "success": success
             })).await.ok();
+        },
+        Action::AFGetUnmatched { provider_id, path, include_subfolders } => {
+            let incl_sub = include_subfolders.unwrap_or(true);
+            let result = tokio::task::spawn_blocking(move || -> Result<Value, Error> {
+                let cache_path = Settings::get_folder()?.join("af_sync_cache.db");
+                let cache = onetagger_autotag::af_sync_cache::AFSyncCache::open(&cache_path)?;
+                let all_files = AudioFileInfo::get_file_list(&path, incl_sub);
+                let unmatched = cache.unmatched_from_list(&provider_id, &all_files)?;
+                let paths: Vec<String> = unmatched.iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect();
+                Ok(json!({
+                    "total": all_files.len(),
+                    "unmatched": paths.len(),
+                    "matched": all_files.len() - paths.len(),
+                    "files": paths
+                }))
+            }).await?;
+            match result {
+                Ok(v) => {
+                    send_socket(websocket, json!({
+                        "action": "afUnmatchedFiles",
+                        "result": v
+                    })).await.ok();
+                },
+                Err(e) => {
+                    send_socket(websocket, json!({
+                        "action": "afUnmatchedFiles",
+                        "result": {"error": format!("{}", e)}
+                    })).await.ok();
+                }
+            }
         },
         Action::TagEditorFolder { path, subdir, recursive } => {
             let recursive = recursive.unwrap_or(false);
