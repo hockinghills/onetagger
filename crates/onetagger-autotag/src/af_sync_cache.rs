@@ -288,18 +288,25 @@ pub fn run_sync(
         })
         .collect();
 
-    // Build a lookup map: lowercase artist -> list of catalog indices
-    // This lets us narrow the search dramatically instead of checking all 8000+ entries
-    let mut artist_index: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
-    for (i, (_, _, _, _, artist_lower)) in cleaned_catalog.iter().enumerate() {
-        // Index by each word in the artist name (catches partial matches)
+    // Build a lookup map: words -> list of catalog indices
+    // Index by BOTH artist AND title words, because YouTube-sourced tracks in AudioMuse
+    // often have the channel name as "artist" and the real artist embedded in the title
+    // (e.g., title="Kevin Morby - Beautiful Strangers", artist="Dead Oceans")
+    let mut word_index: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+    for (i, (_, _, _, ref clean_title, ref artist_lower)) in cleaned_catalog.iter().enumerate() {
+        // Index by artist words
         for word in artist_lower.split_whitespace() {
             if word.len() >= 2 {
-                artist_index.entry(word.to_string()).or_default().push(i);
+                word_index.entry(word.to_string()).or_default().push(i);
             }
         }
-        // Also index by the full artist name
-        artist_index.entry(artist_lower.clone()).or_default().push(i);
+        word_index.entry(artist_lower.clone()).or_default().push(i);
+        // Also index by title words (catches artist-in-title YouTube pattern)
+        for word in clean_title.split_whitespace() {
+            if word.len() >= 3 {
+                word_index.entry(word.to_string()).or_default().push(i);
+            }
+        }
     }
 
     info!("[AF Sync] Matching {} local files...", local_files.len());
@@ -323,38 +330,26 @@ pub fn run_sync(
             continue;
         }
 
-        // Phase 1: Try to find candidates via artist word index
+        // Find candidates via word index (checks both artist and title words)
         let mut candidate_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for word in local_artist_lower.split_whitespace() {
             if word.len() >= 2 {
-                if let Some(indices) = artist_index.get(word) {
+                if let Some(indices) = word_index.get(word) {
                     candidate_indices.extend(indices);
                 }
             }
         }
-        // Also check full artist
-        if let Some(indices) = artist_index.get(&local_artist_lower) {
-            candidate_indices.extend(indices);
-        }
-
-        // If artist lookup found nothing, also try title words as a fallback
-        // (handles cases where artist/title might be swapped in the filename)
-        if candidate_indices.is_empty() {
-            for word in clean_local_title.split_whitespace() {
-                if word.len() >= 3 {
-                    if let Some(indices) = artist_index.get(word) {
-                        candidate_indices.extend(indices);
-                    }
+        for word in clean_local_title.split_whitespace() {
+            if word.len() >= 3 {
+                if let Some(indices) = word_index.get(word) {
+                    candidate_indices.extend(indices);
                 }
             }
         }
 
         let mut best_match: Option<(usize, f64)> = None;
 
-        // Phase 2: Fuzzy match only against candidates (not the entire catalog)
         let candidates: Vec<usize> = if candidate_indices.is_empty() {
-            // Worst case: no artist matches at all, check everything
-            // (but this should be rare)
             (0..cleaned_catalog.len()).collect()
         } else {
             candidate_indices.into_iter().collect()
@@ -365,7 +360,22 @@ pub fn run_sync(
 
             let title_sim = strsim::normalized_levenshtein(&clean_local_title, clean_prov_title);
             let artist_sim = strsim::normalized_levenshtein(&local_artist_lower, prov_artist_lower);
-            let combined = (title_sim * 0.6) + (artist_sim * 0.4);
+
+            // Also check if local artist appears inside the provider title
+            // (YouTube pattern: title="Kevin Morby - Beautiful Strangers", artist="Dead Oceans")
+            let artist_in_title = if local_artist_lower.len() >= 3 {
+                clean_prov_title.contains(&MatchingUtils::clean_title_matching(&local_artist_lower))
+            } else {
+                false
+            };
+
+            // If artist is found in provider title, boost the score significantly
+            let combined = if artist_in_title && artist_sim < 0.5 {
+                // Artist is in the title — use title similarity but give credit for the artist match
+                (title_sim * 0.5) + 0.4  // guaranteed 0.4 base from the artist-in-title find
+            } else {
+                (title_sim * 0.6) + (artist_sim * 0.4)
+            };
 
             if combined >= strictness {
                 if best_match.is_none() || combined > best_match.unwrap().1 {
@@ -424,7 +434,18 @@ pub fn run_sync(
             for (idx, (_, _, _, ref clean_prov_title, ref prov_artist_lower)) in cleaned_catalog.iter().enumerate() {
                 let title_sim = strsim::normalized_levenshtein(&clean_local_title, clean_prov_title);
                 let artist_sim = strsim::normalized_levenshtein(&local_artist_lower, prov_artist_lower);
-                let combined = (title_sim * 0.6) + (artist_sim * 0.4);
+
+                let artist_in_title = if local_artist_lower.len() >= 3 {
+                    clean_prov_title.contains(&MatchingUtils::clean_title_matching(&local_artist_lower))
+                } else {
+                    false
+                };
+
+                let combined = if artist_in_title && artist_sim < 0.5 {
+                    (title_sim * 0.5) + 0.4
+                } else {
+                    (title_sim * 0.6) + (artist_sim * 0.4)
+                };
 
                 if combined >= lower_threshold {
                     if best_match.is_none() || combined > best_match.unwrap().1 {
