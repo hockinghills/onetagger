@@ -373,7 +373,8 @@ pub enum MatchReason {
     ISRC,
     #[serde(rename = "id")]
     ID,
-    Album
+    Album,
+    Fingerprint,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

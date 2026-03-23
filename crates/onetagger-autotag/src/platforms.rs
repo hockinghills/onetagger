@@ -6,7 +6,7 @@ use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use base64::Engine;
 use libloading::{Library, Symbol};
-use onetagger_platforms::{beatport, junodownload, spotify, traxsource, discogs, itunes, musicbrainz, beatsource, bpmsupreme, bandcamp, deezer, musixmatch};
+use onetagger_platforms::{beatport, junodownload, spotify, traxsource, discogs, itunes, musicbrainz, beatsource, bpmsupreme, bandcamp, deezer, musixmatch, acoustid};
 use image::{ImageFormat, ImageReader};
 use onetagger_shared::Settings;
 use onetagger_tagger::custom::MatchTrackResult;
@@ -42,6 +42,7 @@ impl AutotaggerPlatforms {
         AutotaggerPlatforms::add_builtin::<bandcamp::BandcampBuilder>(&mut output);
         AutotaggerPlatforms::add_builtin::<deezer::DeezerBuilder>(&mut output);
         AutotaggerPlatforms::add_builtin::<musixmatch::MusixmatchBuilder>(&mut output);
+        AutotaggerPlatforms::add_builtin::<acoustid::AcoustIDBuilder>(&mut output);
 
         AutotaggerPlatforms { platforms: output }
     }

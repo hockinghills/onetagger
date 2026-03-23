@@ -15,5 +15,6 @@ pub mod deezer;
 pub mod musixmatch;
 pub mod bandcamp;
 pub mod audiomuse;
+pub mod acoustid;
 mod bandcamp_genres;
 
