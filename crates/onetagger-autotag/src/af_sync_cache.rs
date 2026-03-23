@@ -323,6 +323,12 @@ pub fn run_sync(
 
         let clean_local_title = MatchingUtils::clean_title_matching(local_title);
         let local_artist_lower = local_artist.to_lowercase();
+        // Pre-compute cleaned artist for artist-in-title check
+        let clean_local_artist = if local_artist_lower.len() >= 3 {
+            Some(MatchingUtils::clean_title_matching(&local_artist_lower))
+        } else {
+            None
+        };
 
         // Skip files with empty title+artist (can't match on nothing)
         if clean_local_title.is_empty() && local_artist_lower.is_empty() {
@@ -363,11 +369,9 @@ pub fn run_sync(
 
             // Also check if local artist appears inside the provider title
             // (YouTube pattern: title="Kevin Morby - Beautiful Strangers", artist="Dead Oceans")
-            let artist_in_title = if local_artist_lower.len() >= 3 {
-                clean_prov_title.contains(&MatchingUtils::clean_title_matching(&local_artist_lower))
-            } else {
-                false
-            };
+            let artist_in_title = clean_local_artist.as_ref()
+                .map(|a| clean_prov_title.contains(a.as_str()))
+                .unwrap_or(false);
 
             // If artist is found in provider title, boost the score significantly
             let combined = if artist_in_title && artist_sim < 0.5 {
@@ -416,8 +420,15 @@ pub fn run_sync(
 
         let mut still_unmatched = vec![];
         let mut pass2_matched = 0;
+        let pass2_total = unmatched_local.len();
+        let mut pass2_last_log = 0;
 
-        for path in &unmatched_local {
+        for (pass2_idx, path) in unmatched_local.iter().enumerate() {
+            if pass2_idx - pass2_last_log >= 100 {
+                info!("[AF Sync] Pass 2 progress: {}/{} files, {} recovered so far",
+                    pass2_idx, pass2_total, pass2_matched);
+                pass2_last_log = pass2_idx;
+            }
             // Re-read the local file info for this path from the original list
             let local_entry = local_files.iter().find(|(p, _, _)| p == path);
             if local_entry.is_none() {
@@ -427,6 +438,12 @@ pub fn run_sync(
             let (_, local_title, local_artist) = local_entry.unwrap();
             let clean_local_title = MatchingUtils::clean_title_matching(local_title);
             let local_artist_lower = local_artist.to_lowercase();
+            // Pre-compute cleaned artist for artist-in-title check (was being computed 8234x per file!)
+            let clean_local_artist = if local_artist_lower.len() >= 3 {
+                Some(MatchingUtils::clean_title_matching(&local_artist_lower))
+            } else {
+                None
+            };
 
             // This time, search the ENTIRE catalog (no pre-filter)
             // since the pre-filter might have excluded the right match
@@ -435,11 +452,9 @@ pub fn run_sync(
                 let title_sim = strsim::normalized_levenshtein(&clean_local_title, clean_prov_title);
                 let artist_sim = strsim::normalized_levenshtein(&local_artist_lower, prov_artist_lower);
 
-                let artist_in_title = if local_artist_lower.len() >= 3 {
-                    clean_prov_title.contains(&MatchingUtils::clean_title_matching(&local_artist_lower))
-                } else {
-                    false
-                };
+                let artist_in_title = clean_local_artist.as_ref()
+                    .map(|a| clean_prov_title.contains(a.as_str()))
+                    .unwrap_or(false);
 
                 let combined = if artist_in_title && artist_sim < 0.5 {
                     (title_sim * 0.5) + 0.4
