@@ -460,22 +460,74 @@ impl AudioFileInfoImpl for AudioFileInfo {
 
         // Default filename fallback: try "Artist - Title" pattern when tags are still missing.
         // This catches files downloaded from YouTube/etc that have metadata in the filename
-        // but no ID3 tags. Works for patterns like "Everlast - What it's Like (Official Music Video).mp3"
+        // but no ID3 tags. Handles multiple separator styles and YouTube naming conventions.
         if title.is_none() || artists.as_ref().map(|a| a.is_empty()).unwrap_or(true) {
             if let Some(filename_os) = path.as_ref().file_stem() {
-                if let Some(filename) = filename_os.to_str() {
-                    // Try "Artist - Title" split (most common pattern)
-                    if let Some(dash_pos) = filename.find(" - ") {
-                        let file_artist = filename[..dash_pos].trim();
-                        let file_title = filename[dash_pos + 3..].trim();
-                        if !file_artist.is_empty() && !file_title.is_empty() {
+                if let Some(raw_filename) = filename_os.to_str() {
+                    // Step 1: Normalize fullwidth unicode to ASCII before parsing
+                    let filename = raw_filename
+                        .replace('＂', "\"")
+                        .replace('⧸', "/")
+                        .replace('（', "(")
+                        .replace('）', ")")
+                        .replace('｜', "|");
+
+                    // Step 2: Strip surrounding quotes from entire filename
+                    let filename = filename.trim_matches('"').trim();
+
+                    // Step 3: Try separators in priority order: " - ", " | ", " – " (en-dash)
+                    let separator_result = filename.find(" - ")
+                        .map(|pos| (pos, 3usize))  // " - " is 3 bytes
+                        .or_else(|| filename.find(" | ").map(|pos| (pos, 3)))
+                        .or_else(|| filename.find(" – ").map(|pos| (pos, " – ".len())));
+
+                    let mut parsed = false;
+
+                    if let Some((sep_pos, sep_len)) = separator_result {
+                        let left = filename[..sep_pos].trim();
+                        let right = filename[sep_pos + sep_len..].trim();
+                        if !left.is_empty() && !right.is_empty() {
+                            // "Artist - Title" (normal order)
                             if artists.as_ref().map(|a| a.is_empty()).unwrap_or(true) {
-                                info!("Using artist from filename: {:?} -> {:?}", path.as_ref().file_name().unwrap_or_default(), file_artist);
-                                artists = Some(AudioFileInfo::parse_artist_tag(vec![file_artist]));
+                                info!("Using artist from filename: {:?} -> {:?}", path.as_ref().file_name().unwrap_or_default(), left);
+                                artists = Some(AudioFileInfo::parse_artist_tag(vec![left]));
                             }
                             if title.is_none() {
-                                info!("Using title from filename: {:?} -> {:?}", path.as_ref().file_name().unwrap_or_default(), file_title);
-                                title = Some(file_title.to_string());
+                                info!("Using title from filename: {:?} -> {:?}", path.as_ref().file_name().unwrap_or_default(), right);
+                                title = Some(right.to_string());
+                            }
+                            parsed = true;
+                        }
+                    }
+
+                    // Step 4: If no standard separator found, try "Title by Artist" (reversed)
+                    // Common in YouTube: "Dragonfly Lullaby by Paul Izak"
+                    if !parsed {
+                        // Case-insensitive search for " by " 
+                        let lower = filename.to_lowercase();
+                        if let Some(by_pos) = lower.rfind(" by ") {
+                            let potential_title = filename[..by_pos].trim();
+                            let potential_artist = filename[by_pos + 4..].trim();
+                            // Sanity check: artist part shouldn't be too long (avoid matching
+                            // "Stand By Me" as title="" artist="Me")
+                            if !potential_title.is_empty() && !potential_artist.is_empty()
+                                && potential_artist.len() > 2
+                                && potential_title.len() > 2
+                            {
+                                // Strip quotes from title (common: "Song Title" by Artist)
+                                let potential_title = potential_title.trim_matches('"')
+                                    .trim_matches('\'').trim();
+
+                                if artists.as_ref().map(|a| a.is_empty()).unwrap_or(true) {
+                                    info!("Using artist from filename (reversed 'by'): {:?} -> {:?}",
+                                        path.as_ref().file_name().unwrap_or_default(), potential_artist);
+                                    artists = Some(AudioFileInfo::parse_artist_tag(vec![potential_artist]));
+                                }
+                                if title.is_none() {
+                                    info!("Using title from filename (reversed 'by'): {:?} -> {:?}",
+                                        path.as_ref().file_name().unwrap_or_default(), potential_title);
+                                    title = Some(potential_title.to_string());
+                                }
                             }
                         }
                     }
