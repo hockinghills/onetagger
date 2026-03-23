@@ -277,34 +277,105 @@ pub fn run_sync(
     // Track which provider entries got matched (for orphan detection)
     let mut matched_provider_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for (path, local_title, local_artist) in local_files {
+    // Pre-compute cleaned catalog entries (avoid redoing this per local file)
+    info!("[AF Sync] Pre-processing {} catalog entries...", catalog.len());
+    let cleaned_catalog: Vec<(String, String, String, String, String)> = catalog
+        .iter()
+        .map(|(id, title, artist)| {
+            let clean_title = MatchingUtils::clean_title_matching(title);
+            let artist_lower = artist.to_lowercase();
+            (id.clone(), title.clone(), artist.clone(), clean_title, artist_lower)
+        })
+        .collect();
+
+    // Build a lookup map: lowercase artist -> list of catalog indices
+    // This lets us narrow the search dramatically instead of checking all 8000+ entries
+    let mut artist_index: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+    for (i, (_, _, _, _, artist_lower)) in cleaned_catalog.iter().enumerate() {
+        // Index by each word in the artist name (catches partial matches)
+        for word in artist_lower.split_whitespace() {
+            if word.len() >= 2 {
+                artist_index.entry(word.to_string()).or_default().push(i);
+            }
+        }
+        // Also index by the full artist name
+        artist_index.entry(artist_lower.clone()).or_default().push(i);
+    }
+
+    info!("[AF Sync] Matching {} local files...", local_files.len());
+    let total = local_files.len();
+    let mut last_log = 0;
+
+    for (file_idx, (path, local_title, local_artist)) in local_files.iter().enumerate() {
+        // Progress logging every 500 files
+        if file_idx - last_log >= 500 {
+            info!("[AF Sync] Progress: {}/{} files processed, {} matched so far",
+                file_idx, total, matched.len());
+            last_log = file_idx;
+        }
+
         let clean_local_title = MatchingUtils::clean_title_matching(local_title);
         let local_artist_lower = local_artist.to_lowercase();
 
-        let mut best_match: Option<(&str, &str, &str, f64)> = None;
+        // Skip files with empty title+artist (can't match on nothing)
+        if clean_local_title.is_empty() && local_artist_lower.is_empty() {
+            unmatched_local.push(path.clone());
+            continue;
+        }
 
-        for (prov_id, prov_title, prov_artist) in catalog {
-            let clean_prov_title = MatchingUtils::clean_title_matching(prov_title);
-            let prov_artist_lower = prov_artist.to_lowercase();
+        // Phase 1: Try to find candidates via artist word index
+        let mut candidate_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for word in local_artist_lower.split_whitespace() {
+            if word.len() >= 2 {
+                if let Some(indices) = artist_index.get(word) {
+                    candidate_indices.extend(indices);
+                }
+            }
+        }
+        // Also check full artist
+        if let Some(indices) = artist_index.get(&local_artist_lower) {
+            candidate_indices.extend(indices);
+        }
 
-            // Title similarity
-            let title_sim = strsim::normalized_levenshtein(&clean_local_title, &clean_prov_title);
-
-            // Artist similarity
-            let artist_sim = strsim::normalized_levenshtein(&local_artist_lower, &prov_artist_lower);
-
-            // Combined score (title weighted more heavily)
-            let combined = (title_sim * 0.6) + (artist_sim * 0.4);
-
-            if combined >= strictness {
-                if best_match.is_none() || combined > best_match.unwrap().3 {
-                    best_match = Some((prov_id.as_str(), prov_title.as_str(), prov_artist.as_str(), combined));
+        // If artist lookup found nothing, also try title words as a fallback
+        // (handles cases where artist/title might be swapped in the filename)
+        if candidate_indices.is_empty() {
+            for word in clean_local_title.split_whitespace() {
+                if word.len() >= 3 {
+                    if let Some(indices) = artist_index.get(word) {
+                        candidate_indices.extend(indices);
+                    }
                 }
             }
         }
 
-        if let Some((prov_id, prov_title, prov_artist, confidence)) = best_match {
-            // Store the mapping
+        let mut best_match: Option<(usize, f64)> = None;
+
+        // Phase 2: Fuzzy match only against candidates (not the entire catalog)
+        let candidates: Vec<usize> = if candidate_indices.is_empty() {
+            // Worst case: no artist matches at all, check everything
+            // (but this should be rare)
+            (0..cleaned_catalog.len()).collect()
+        } else {
+            candidate_indices.into_iter().collect()
+        };
+
+        for idx in candidates {
+            let (_, _, _, ref clean_prov_title, ref prov_artist_lower) = cleaned_catalog[idx];
+
+            let title_sim = strsim::normalized_levenshtein(&clean_local_title, clean_prov_title);
+            let artist_sim = strsim::normalized_levenshtein(&local_artist_lower, prov_artist_lower);
+            let combined = (title_sim * 0.6) + (artist_sim * 0.4);
+
+            if combined >= strictness {
+                if best_match.is_none() || combined > best_match.unwrap().1 {
+                    best_match = Some((idx, combined));
+                }
+            }
+        }
+
+        if let Some((idx, confidence)) = best_match {
+            let (ref prov_id, ref prov_title, ref prov_artist, _, _) = cleaned_catalog[idx];
             let _ = cache.set_mapping(
                 path,
                 provider_id,
@@ -321,6 +392,10 @@ pub fn run_sync(
             unmatched_local.push(path.clone());
         }
     }
+
+    info!("[AF Sync] Complete: {} matched, {} unmatched local, {} orphaned provider",
+        matched.len(), unmatched_local.len(),
+        catalog.len() - matched_provider_ids.len());
 
     // Find orphaned provider entries
     let unmatched_provider: Vec<(String, String, String)> = catalog

@@ -102,11 +102,16 @@
             <div class='text-subtitle2 q-mb-md text-grey-6'>
                 Match your local files against the provider's catalog
             </div>
-            <div class='row justify-center'>
+            <div class='row justify-center q-gutter-sm'>
                 <q-btn
                     outline color='secondary' label='Sync Library' icon='mdi-sync'
                     :loading='syncing' @click='syncLibrary'
                     :disable='!providerConfig.path || !isConnected'
+                />
+                <q-btn
+                    outline color='grey-7' label='Reset Cache' icon='mdi-delete-outline'
+                    @click='resetCache'
+                    :disable='!selectedProvider'
                 />
             </div>
             <div v-if='!providerConfig.path && isConnected' class='text-caption text-grey-6 q-mt-xs'>
@@ -401,6 +406,14 @@ function syncLibrary() {
         includeSubfolders: providerConfig.value.includeSubfolders,
     });
     setTimeout(() => { syncing.value = false; }, 300000);
+}
+
+function resetCache() {
+    $1t.afSyncResult.value = null;
+    $1t.afConnectionStatus.value = null;
+    $1t.send('aFResetCache', {
+        providerId: providerConfig.value.providerId,
+    });
 }
 
 function startProvider() {

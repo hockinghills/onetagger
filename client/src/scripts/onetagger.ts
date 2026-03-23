@@ -282,6 +282,10 @@ class OneTagger {
             case 'afConfigCallback':
                 // Handled by component callbacks
                 break;
+            case 'afCacheReset':
+                // Cache was reset, clear UI state
+                this.afSyncResult.value = null;
+                break;
             // Folder browser
             case 'folderBrowser':
                 this.onFolderBrowserEvent(json);

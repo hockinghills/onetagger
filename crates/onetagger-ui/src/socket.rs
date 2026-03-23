@@ -80,6 +80,9 @@ enum Action {
     /// Config callback for an AF provider (e.g., test connection)
     #[serde(rename_all = "camelCase")]
     AFConfigCallback { provider_id: String, callback_id: String, config: Value },
+    /// Reset the sync cache for a provider
+    #[serde(rename_all = "camelCase")]
+    AFResetCache { provider_id: String },
 
     TagEditorFolder { path: Option<String>, subdir: Option<String>, recursive: Option<bool>  },
     TagEditorLoad { path: PathBuf },
@@ -634,6 +637,20 @@ async fn handle_message(text: &str, websocket: &mut WebSocket, context: &mut Soc
                 "action": "afConfigCallback",
                 "provider": provider_id_clone,
                 "response": result
+            })).await.ok();
+        },
+        Action::AFResetCache { provider_id } => {
+            let result = tokio::task::spawn_blocking(move || -> Result<(), Error> {
+                let cache_path = Settings::get_folder()?.join("af_sync_cache.db");
+                let cache = onetagger_autotag::af_sync_cache::AFSyncCache::open(&cache_path)?;
+                cache.clear_provider(&provider_id)?;
+                info!("[AF] Cache cleared for provider: {}", provider_id);
+                Ok(())
+            }).await?;
+            let success = result.is_ok();
+            send_socket(websocket, json!({
+                "action": "afCacheReset",
+                "success": success
             })).await.ok();
         },
         Action::TagEditorFolder { path, subdir, recursive } => {
