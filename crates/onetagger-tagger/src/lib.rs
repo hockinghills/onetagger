@@ -956,29 +956,31 @@ impl MatchingUtils {
             .replace('\u{1f3b6}', "")  // 🎶
             .replace('\u{1f525}', ""); // 🔥
 
-        // Case-insensitive removal of common YouTube suffixes
+        // Case-insensitive removal of common YouTube suffixes.
+        // Work entirely on the string using case-insensitive replace to avoid
+        // byte index mismatches between original and lowercased versions.
         let patterns = [
-            // Video types
-            "(official music video)", "(official video)", "(official audio)",
-            "(music video)", "(lyric video)", "(lyrics video)", "(lyric)",
-            "(audio)", "(visualizer)", "(visualiser)",
-            "(official lyric video)", "(official visualizer)",
-            "(official)", "(video)", 
-            // Live/session variants
-            "(live)", "(acoustic)", "(live acoustic)",
-            "(acoustic version)", "(live version)", "(acoustic session)",
-            // Misc
-            "(full album stream)", "(bonus)", "(hd)", "(hq)",
-            "(remastered)", "(remaster)",
-            // Common without parens
+            // Longest patterns first to avoid partial matches
+            "(official lyric video)", "(official music video)", "(official visualizer)",
+            "(official visualiser)", "(official video)", "(official audio)",
+            "(lyrics video)", "(lyric video)", "(music video)",
+            "(live acoustic)", "(acoustic version)", "(acoustic session)",
+            "(live version)", "(full album stream)",
+            "(visualizer)", "(visualiser)", "(remastered)", "(remaster)",
+            "(acoustic)", "(lyric)", "(audio)", "(live)", "(official)",
+            "(video)", "(bonus)", "(hd)", "(hq)",
             "official music video", "official video", "official audio",
             "music video",
         ];
 
-        let lower = out.to_lowercase();
         for pattern in &patterns {
+            // Case-insensitive find and remove
+            let lower = out.to_lowercase();
             if let Some(pos) = lower.find(pattern) {
-                out = format!("{}{}", &out[..pos], &out[pos + pattern.len()..]);
+                // Verify the byte position is valid for the original string
+                if pos <= out.len() && pos + pattern.len() <= out.len() {
+                    out = format!("{}{}", &out[..pos], &out[pos + pattern.len()..]);
+                }
             }
         }
 
@@ -987,6 +989,10 @@ impl MatchingUtils {
             out = out[..pipe_pos].to_string();
         }
         if let Some(pipe_pos) = out.find(" || ") {
+            out = out[..pipe_pos].to_string();
+        }
+        // Also handle fullwidth pipe
+        if let Some(pipe_pos) = out.find(" ｜ ") {
             out = out[..pipe_pos].to_string();
         }
 
