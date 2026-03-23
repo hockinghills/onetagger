@@ -458,6 +458,31 @@ impl AudioFileInfoImpl for AudioFileInfo {
             }
         }
 
+        // Default filename fallback: try "Artist - Title" pattern when tags are still missing.
+        // This catches files downloaded from YouTube/etc that have metadata in the filename
+        // but no ID3 tags. Works for patterns like "Everlast - What it's Like (Official Music Video).mp3"
+        if title.is_none() || artists.as_ref().map(|a| a.is_empty()).unwrap_or(true) {
+            if let Some(filename_os) = path.as_ref().file_stem() {
+                if let Some(filename) = filename_os.to_str() {
+                    // Try "Artist - Title" split (most common pattern)
+                    if let Some(dash_pos) = filename.find(" - ") {
+                        let file_artist = filename[..dash_pos].trim();
+                        let file_title = filename[dash_pos + 3..].trim();
+                        if !file_artist.is_empty() && !file_title.is_empty() {
+                            if artists.as_ref().map(|a| a.is_empty()).unwrap_or(true) {
+                                info!("Using artist from filename: {:?} -> {:?}", path.as_ref().file_name().unwrap_or_default(), file_artist);
+                                artists = Some(AudioFileInfo::parse_artist_tag(vec![file_artist]));
+                            }
+                            if title.is_none() {
+                                info!("Using title from filename: {:?} -> {:?}", path.as_ref().file_name().unwrap_or_default(), file_title);
+                                title = Some(file_title.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Get tagging status
         let tagged = match tag.get_raw("1T_TAGGEDDATE").map(|t| t.first().map(String::from)).flatten() {
             Some(val) => {
