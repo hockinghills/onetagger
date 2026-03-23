@@ -63,15 +63,12 @@ struct FpcalcOutput {
 pub struct AcoustIDConfig {
     /// AcoustID API key (get one at https://acoustid.org/new-application)
     pub api_key: String,
-    /// Path to fpcalc binary (empty = search PATH)
-    pub fpcalc_path: String,
 }
 
 impl Default for AcoustIDConfig {
     fn default() -> Self {
         Self {
             api_key: String::new(),
-            fpcalc_path: String::new(),
         }
     }
 }
@@ -86,22 +83,14 @@ pub struct AcoustID {
 impl AcoustID {
     /// Run fpcalc to generate a Chromaprint fingerprint for an audio file
     fn fingerprint(&self, path: &std::path::Path) -> Result<FpcalcOutput, Error> {
-        let fpcalc = if self.config.fpcalc_path.is_empty() {
-            "fpcalc".to_string()
-        } else {
-            self.config.fpcalc_path.clone()
-        };
-
-        let output = Command::new(&fpcalc)
+        let output = Command::new("fpcalc")
             .arg("-json")
             .arg(path)
             .output()
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     anyhow!(
-                        "fpcalc not found! Install it with: sudo apt install libchromaprint-tools\n\
-                         Or download from: https://acoustid.org/chromaprint\n\
-                         Or set the path in AcoustID config."
+                        "fpcalc not found! Install it with: sudo apt install libchromaprint-tools"
                     )
                 } else {
                     anyhow!("Failed to run fpcalc: {}", e)
@@ -288,12 +277,6 @@ impl AutotaggerSourceBuilder for AcoustIDBuilder {
                     "api_key",
                     "AcoustID API Key",
                     "Get a free key at https://acoustid.org/new-application",
-                    PlatformCustomOptionValue::String { value: String::new(), hidden: None },
-                )
-                .add_tooltip(
-                    "fpcalc_path",
-                    "fpcalc Path (leave empty for auto-detect)",
-                    "Path to the fpcalc binary. Leave empty to search PATH.",
                     PlatformCustomOptionValue::String { value: String::new(), hidden: None },
                 ),
             requires_auth: false,
