@@ -27,18 +27,14 @@
                 <q-select
                     v-model='providerConfig.providerId'
                     :options='providerOptions'
-                    emit-value
-                    map-options
-                    filled
+                    emit-value map-options filled
                     style='width: 400px'
                     @update:model-value='onProviderChange'
                 >
                     <template v-slot:option='scope'>
                         <q-item v-bind='scope.itemProps'>
                             <q-item-section avatar v-if='scope.opt.icon'>
-                                <q-avatar size='32px'>
-                                    <img :src='scope.opt.icon'>
-                                </q-avatar>
+                                <q-avatar size='32px'><img :src='scope.opt.icon'></q-avatar>
                             </q-item-section>
                             <q-item-section>
                                 <q-item-label>{{ scope.opt.label }}</q-item-label>
@@ -64,23 +60,13 @@
                 <q-input filled label='API Token (optional)' v-model='providerConfig.providerConfig.apiToken'
                     style='flex: 1; min-width: 200px;' type='password' />
             </div>
-            <div class='row justify-center q-mt-sm q-gutter-sm'>
+            <div class='row justify-center q-mt-sm'>
                 <q-btn outline color='primary' label='Test Connection' icon='mdi-connection'
                     :loading='testing' @click='testConnection' />
-                <q-btn outline color='secondary' label='Sync Library' icon='mdi-sync'
-                    :loading='syncing' @click='syncLibrary' />
             </div>
             <div v-if='$1t.afConnectionStatus.value' class='q-mt-sm'>
                 <q-badge :color='$1t.afConnectionStatus.value.success ? "positive" : "negative"' class='q-pa-sm'>
                     {{ $1t.afConnectionStatus.value.message }}
-                </q-badge>
-            </div>
-            <div v-if='$1t.afSyncResult.value && $1t.afSyncResult.value.success' class='q-mt-sm'>
-                <q-badge color='grey-8' class='q-pa-sm text-caption' multi-line style='max-width: 500px;'>
-                    Catalog: {{ $1t.afSyncResult.value.catalogSize }} tracks |
-                    Matched: {{ $1t.afSyncResult.value.matched }} |
-                    Unmatched local: {{ $1t.afSyncResult.value.unmatchedLocal }} |
-                    Orphaned in provider: {{ $1t.afSyncResult.value.unmatchedProvider }}
                 </q-badge>
             </div>
         </div>
@@ -109,9 +95,64 @@
             </div>
         </div>
 
-        <!-- Prominent Tag -->
+        <!-- Sync Library (below path, requires connection + path) -->
         <div v-if='selectedProvider'>
             <q-separator class='q-mx-auto' style='max-width: 513px; margin-top: 16px; margin-bottom: 25px' inset color="dark"/>
+            <div class='text-subtitle2 text-bold text-primary'>SYNC LIBRARY</div>
+            <div class='text-subtitle2 q-mb-md text-grey-6'>
+                Match your local files against the provider's catalog
+            </div>
+            <div class='row justify-center'>
+                <q-btn
+                    outline color='secondary' label='Sync Library' icon='mdi-sync'
+                    :loading='syncing' @click='syncLibrary'
+                    :disable='!providerConfig.path || !isConnected'
+                />
+            </div>
+            <div v-if='!providerConfig.path && isConnected' class='text-caption text-grey-6 q-mt-xs'>
+                Enter a path above first
+            </div>
+            <div v-if='!isConnected' class='text-caption text-grey-6 q-mt-xs'>
+                Test your connection first
+            </div>
+            <!-- Sync Results -->
+            <div v-if='$1t.afSyncResult.value' class='q-mt-md'>
+                <div v-if='$1t.afSyncResult.value.success' class='sync-results'>
+                    <div class='text-subtitle2 text-weight-bold q-mb-sm' style='color: #00D2BF;'>Sync Complete</div>
+                    <div class='row justify-center q-gutter-md'>
+                        <div class='sync-stat'>
+                            <div class='sync-stat-number'>{{ $1t.afSyncResult.value.catalogSize }}</div>
+                            <div class='sync-stat-label'>Provider Tracks</div>
+                        </div>
+                        <div class='sync-stat'>
+                            <div class='sync-stat-number'>{{ $1t.afSyncResult.value.localTotal }}</div>
+                            <div class='sync-stat-label'>Local Files</div>
+                        </div>
+                        <div class='sync-stat'>
+                            <div class='sync-stat-number text-positive'>{{ $1t.afSyncResult.value.matched }}</div>
+                            <div class='sync-stat-label'>Matched</div>
+                        </div>
+                        <div class='sync-stat'>
+                            <div class='sync-stat-number' :class='$1t.afSyncResult.value.unmatchedLocal > 0 ? "text-warning" : ""'>{{ $1t.afSyncResult.value.unmatchedLocal }}</div>
+                            <div class='sync-stat-label'>Unmatched Local</div>
+                        </div>
+                        <div class='sync-stat'>
+                            <div class='sync-stat-number' :class='$1t.afSyncResult.value.unmatchedProvider > 0 ? "text-orange" : ""'>{{ $1t.afSyncResult.value.unmatchedProvider }}</div>
+                            <div class='sync-stat-label'>Orphaned in Provider</div>
+                        </div>
+                    </div>
+                </div>
+                <div v-else>
+                    <q-badge color='negative' class='q-pa-sm'>
+                        Sync failed: {{ $1t.afSyncResult.value.message }}
+                    </q-badge>
+                </div>
+            </div>
+        </div>
+
+        <!-- Prominent Tag -->
+        <div v-if='selectedProvider'>
+            <q-separator class='q-mx-auto' style='max-width: 513px; margin-top: 20px; margin-bottom: 25px' inset color="dark"/>
             <div class='text-subtitle2 text-bold text-primary'>PROMINENT TAG</div>
             <div class='text-subtitle2 text-grey-6'>Converts feature values to labels based on threshold</div>
             <div class='text-subtitle2 q-mt-xs q-mb-md text-grey-4'>e.g. #dance-high, #energy-med, #gentle, #relaxed</div>
@@ -326,6 +367,10 @@ const providerOptions = computed(() => {
     }));
 });
 
+const isConnected = computed(() => {
+    return $1t.afConnectionStatus.value?.success === true;
+});
+
 function onProviderChange() {
     const provider = selectedProvider.value;
     if (provider) {
@@ -355,7 +400,7 @@ function syncLibrary() {
         path: providerConfig.value.path,
         includeSubfolders: providerConfig.value.includeSubfolders,
     });
-    setTimeout(() => { syncing.value = false; }, 120000);
+    setTimeout(() => { syncing.value = false; }, 300000);
 }
 
 function startProvider() {
@@ -388,7 +433,6 @@ function startLegacy() {
 watch(() => $1t.afConnectionStatus.value, () => { testing.value = false; });
 watch(() => $1t.afSyncResult.value, () => { syncing.value = false; });
 
-// Init feature configs when providers arrive
 watch(() => $1t.afProviders.value, (providers) => {
     if (providers.length > 0 && selectedProvider.value) {
         providerConfig.value.initFromCapabilities(selectedProvider.value.capabilities.features);
@@ -419,4 +463,8 @@ onMounted(() => {
 .t-range .q-slider__inner.absolute { background: var(--q-primary) !important; }
 .custom-margin { margin-top: 35px !important; }
 .click-highlight { padding: 4px; border-radius: 2px; background: #262828; margin-bottom: 4px; margin-left: 4px; }
+.sync-results { padding: 16px; margin: 8px auto; max-width: 600px; background: rgba(0,210,191,0.05); border-radius: 8px; border: 1px solid rgba(0,210,191,0.15); }
+.sync-stat { text-align: center; min-width: 80px; }
+.sync-stat-number { font-size: 1.4em; font-weight: bold; color: #e0e0e0; }
+.sync-stat-label { font-size: 0.75em; color: #888; margin-top: 2px; }
 </style>

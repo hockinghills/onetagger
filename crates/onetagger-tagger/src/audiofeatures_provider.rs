@@ -1,11 +1,11 @@
 use anyhow::Error;
 use std::any::Any;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 
-use crate::{AudioFileInfo, FrameName, AudioFileFormat, ConfigCallbackResponse};
+use crate::{FrameName, ConfigCallbackResponse};
 
 
 // ============================================================================
@@ -235,7 +235,7 @@ pub trait AFProvider: Any + Send + Sync {
 
     /// Find tracks similar to the given track. Optional capability.
     /// Returns an error if the provider doesn't support similarity search.
-    fn find_similar(&mut self, provider_track_id: &str, count: usize)
+    fn find_similar(&mut self, _provider_track_id: &str, _count: usize)
         -> Result<Vec<SimilarTrack>, Error>
     {
         Err(anyhow!("Similarity search not supported by this provider"))
@@ -245,9 +245,9 @@ pub trait AFProvider: Any + Send + Sync {
     /// Optional capability.
     fn find_path(
         &mut self,
-        from_provider_id: &str,
-        to_provider_id: &str,
-        steps: usize,
+        _from_provider_id: &str,
+        _to_provider_id: &str,
+        _steps: usize,
     ) -> Result<Vec<SimilarTrack>, Error> {
         Err(anyhow!("Song paths not supported by this provider"))
     }

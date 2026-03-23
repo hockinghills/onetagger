@@ -263,7 +263,7 @@ impl AFProvider for AudioMuseProvider {
         let score = self.client.get_score(provider_track_id)?;
 
         let mut features = HashMap::new();
-        let mut prominent_tags = HashMap::new();
+        let prominent_tags = HashMap::new();
         let mut extra = HashMap::new();
 
         // Parse other_features → numeric feature values
