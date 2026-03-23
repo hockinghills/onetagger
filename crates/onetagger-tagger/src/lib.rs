@@ -17,6 +17,7 @@ use strsim::normalized_levenshtein;
 use unidecode::unidecode;
 
 pub mod custom;
+pub mod audiofeatures_provider;
 
 const ATTRIBUTES_TO_REMOVE: [&'static str; 23] = ["(intro)", "(clean)", "(intro clean)", "(dirty)", "(intro dirty)", "(clean extended)",
     "(intro outro)", "(extended)", "(instrumental)", "(quick hit)", "(club version)", "(radio version)", "(club)", "(radio)", "(main)", 

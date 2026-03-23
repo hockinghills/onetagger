@@ -62,12 +62,88 @@ class AudioFeaturesSettings {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
     config?: AudioFeaturesConfig;
+    /// Provider-based config (new system)
+    providerConfig?: ProviderAFConfig;
+    /// Which mode: 'legacy' (Spotify direct) or 'provider' (new system)
+    mode: string = 'provider';
 
     static fromJson(data: any): AudioFeaturesSettings {
         let a: AudioFeaturesSettings = Object.assign(new AudioFeaturesSettings(), data);
         if (data.config)
             a.config = AudioFeaturesConfig.fromJson(data.config);
+        if (data.providerConfig)
+            a.providerConfig = ProviderAFConfig.fromJson(data.providerConfig);
         return a;
+    }
+}
+
+/// Config for the provider-based audio features system
+class ProviderAFConfig {
+    providerId: string = 'audiomuse';
+    path?: string;
+    mainTag = FrameName.same('AUDIO_FEATURES');
+    separators = new Separators();
+    featureConfig: Record<string, ProviderAFFeatureConfig> = {};
+    metaTag: boolean = true;
+    skipTagged: boolean = false;
+    includeSubfolders: boolean = true;
+    writeBpm: boolean = true;
+    writeKey: boolean = true;
+    writeGenre: boolean = true;
+    genreCount: number = 3;
+    writeMood: boolean = true;
+    moodCount: number = 3;
+    genreTag = FrameName.same('GENRE');
+    moodTag = FrameName.same('AM_MOOD');
+    /// Provider-specific config (e.g., AudioMuse URL)
+    providerConfig: any = { apiUrl: 'http://localhost:8000', apiToken: null };
+    type?: string;
+
+    static fromJson(data: any): ProviderAFConfig {
+        let c: ProviderAFConfig = Object.assign(new ProviderAFConfig(), data);
+        if (data.mainTag) c.mainTag = FrameName.fromJson(data.mainTag);
+        if (data.genreTag) c.genreTag = FrameName.fromJson(data.genreTag);
+        if (data.moodTag) c.moodTag = FrameName.fromJson(data.moodTag);
+        if (data.featureConfig) {
+            for (const [k, v] of Object.entries(data.featureConfig)) {
+                c.featureConfig[k] = ProviderAFFeatureConfig.fromJson(v);
+            }
+        }
+        return c;
+    }
+
+    /// Build feature configs from provider capabilities
+    initFromCapabilities(features: any[]) {
+        for (const f of features) {
+            if (!this.featureConfig[f.id]) {
+                this.featureConfig[f.id] = new ProviderAFFeatureConfig(
+                    f.defaultThresholdMin, f.defaultThresholdMax, f.defaultTag
+                );
+            }
+        }
+    }
+}
+
+class ProviderAFFeatureConfig {
+    tag: FrameName;
+    enabled: boolean;
+    thresholdMin: number;
+    thresholdMax: number;
+
+    constructor(min: number, max: number, frameName: string) {
+        this.tag = FrameName.same(frameName);
+        this.thresholdMin = min;
+        this.thresholdMax = max;
+        this.enabled = true;
+    }
+
+    static fromJson(data: any): ProviderAFFeatureConfig {
+        let p = new ProviderAFFeatureConfig(
+            data.thresholdMin || 0, data.thresholdMax || 100, ''
+        );
+        p.enabled = data.enabled ?? true;
+        if (data.tag) p.tag = FrameName.fromJson(data.tag);
+        return p;
     }
 }
 
@@ -259,4 +335,4 @@ class AudioFeaturesProperty {
     }
 }
 
-export { Settings, QuickTagSettings, AudioFeaturesConfig, AudioFeaturesProperty };
+export { Settings, QuickTagSettings, AudioFeaturesConfig, AudioFeaturesProperty, ProviderAFConfig, ProviderAFFeatureConfig };

@@ -22,6 +22,9 @@ class OneTagger {
     quickTag: Ref<QuickTag> = ref(new QuickTag());
     settings: Ref<Settings> = ref(new Settings());
     spotify: Ref<Spotify> = ref(new Spotify());
+    afProviders: Ref<any[]> = ref([]);
+    afSyncResult: Ref<any> = ref(null);
+    afConnectionStatus: Ref<any> = ref(null);
     helpDialog: Ref<{ open: boolean, route?: string }> = ref({ open: false });
     folderBrowser: Ref<FolderBrowser> = ref(new FolderBrowser());
     taggerStatus: Ref<TaggerStatus> = ref(new TaggerStatus());
@@ -65,6 +68,7 @@ class OneTagger {
             setTimeout(() => {
                 this.send('init');
                 this.send('spotifyAuthorized');
+                this.send('loadAFProviders');
                 // Load platforms
                 setTimeout(() => this.loadPlatforms(), 25);
             }, 100);
@@ -264,6 +268,19 @@ class OneTagger {
             // Spotify
             case 'spotifyAuthorized':
                 this.spotify.value.authorized = json.value;
+                break;
+            // AF Provider events
+            case 'afProviders':
+                this.afProviders.value = json.providers;
+                break;
+            case 'afTestConnection':
+                this.afConnectionStatus.value = json.result;
+                break;
+            case 'afSyncResult':
+                this.afSyncResult.value = json.result;
+                break;
+            case 'afConfigCallback':
+                // Handled by component callbacks
                 break;
             // Folder browser
             case 'folderBrowser':

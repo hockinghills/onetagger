@@ -14,6 +14,9 @@ use onetagger_tag::{TagChanges, TagSeparators, Tag, Field};
 use onetagger_tagger::{TaggerConfig, AudioFileInfo, TrackMatch};
 use onetagger_autotag::{Tagger, AudioFileInfoImpl, TaggerConfigExt, AUTOTAGGER_PLATFORMS};
 use onetagger_autotag::audiofeatures::{AudioFeaturesConfig, AudioFeatures};
+use onetagger_autotag::af_providers::AF_PROVIDERS;
+use onetagger_autotag::af_engine;
+use onetagger_tagger::audiofeatures_provider::AFConfig;
 use onetagger_platforms::spotify::Spotify;
 use onetagger_player::{AudioSources, AudioPlayer};
 use onetagger_shared::{Settings, COMMIT};
@@ -66,6 +69,18 @@ enum Action {
     SpotifyAuthorize { client_id: String, client_secret: String },
     SpotifyAuthorized,
 
+    /// Load the list of available AF providers
+    LoadAFProviders,
+    /// Test connection to an AF provider
+    #[serde(rename_all = "camelCase")]
+    AFTestConnection { provider_id: String, config: Value },
+    /// Run the sync step for an AF provider
+    #[serde(rename_all = "camelCase")]
+    AFSync { provider_id: String, config: Value, path: Option<PathBuf>, include_subfolders: Option<bool> },
+    /// Config callback for an AF provider (e.g., test connection)
+    #[serde(rename_all = "camelCase")]
+    AFConfigCallback { provider_id: String, callback_id: String, config: Value },
+
     TagEditorFolder { path: Option<String>, subdir: Option<String>, recursive: Option<bool>  },
     TagEditorLoad { path: PathBuf },
     TagEditorSave { changes: TagChanges },
@@ -86,7 +101,8 @@ enum Action {
 #[serde(rename_all = "camelCase", tag = "type")]
 enum TaggerConfigs {
     AutoTagger(TaggerConfig), 
-    AudioFeatures(AudioFeaturesConfig)
+    AudioFeatures(AudioFeaturesConfig),
+    ProviderAudioFeatures(AFConfig),
 }
 
 impl TaggerConfigs {
@@ -102,6 +118,9 @@ impl TaggerConfigs {
             },
             TaggerConfigs::AudioFeatures(c) => {
                 info!("AudioFeatures Config: {:?}", c);
+            },
+            TaggerConfigs::ProviderAudioFeatures(c) => {
+                info!("Provider AudioFeatures Config: provider={}, path={:?}", c.provider_id, c.path);
             }
         }
     }
@@ -347,6 +366,16 @@ async fn handle_message(text: &str, websocket: &mut WebSocket, context: &mut Soc
                     let rx = AudioFeatures::start_tagging(c.clone(), spotify, files);
                     ("audioFeatures", rx)
                 },
+                TaggerConfigs::ProviderAudioFeatures(c) => {
+                    if files.is_empty() {
+                        let path = c.path.as_ref().map(|p| p.to_owned()).unwrap_or_default();
+                        files = AudioFileInfo::get_file_list(&path, c.include_subfolders);
+                        folder_path = Some(path);
+                        file_count = files.len();
+                    }
+                    let rx = af_engine::start_provider_tagging(c.clone(), files);
+                    ("providerAudioFeatures", rx)
+                },
             };
 
             // Start
@@ -489,6 +518,122 @@ async fn handle_message(text: &str, websocket: &mut WebSocket, context: &mut Soc
             send_socket(websocket, json!({
                 "action": "spotifyAuthorized",
                 "value": context.spotify.is_some()
+            })).await.ok();
+        },
+        // === Audio Features Provider Actions ===
+        Action::LoadAFProviders => {
+            let providers = AF_PROVIDERS.lock().unwrap().provider_list();
+            send_socket(websocket, json!({
+                "action": "afProviders",
+                "providers": providers
+            })).await.ok();
+        },
+        Action::AFTestConnection { provider_id, config } => {
+            let result = tokio::task::spawn_blocking(move || {
+                let mut registry = AF_PROVIDERS.lock().unwrap();
+                if let Some(builder) = registry.get_builder(&provider_id) {
+                    match builder.get_provider(&config) {
+                        Ok(mut provider) => {
+                            match provider.test_connection() {
+                                Ok(msg) => json!({"success": true, "message": msg}),
+                                Err(e) => json!({"success": false, "message": format!("{}", e)}),
+                            }
+                        }
+                        Err(e) => json!({"success": false, "message": format!("Failed to create provider: {}", e)}),
+                    }
+                } else {
+                    json!({"success": false, "message": "Unknown provider"})
+                }
+            }).await?;
+            send_socket(websocket, json!({
+                "action": "afTestConnection",
+                "result": result
+            })).await.ok();
+        },
+        Action::AFSync { provider_id, config, path, include_subfolders } => {
+            let incl_sub = include_subfolders.unwrap_or(true);
+            let sync_path = path.clone();
+            let result = tokio::task::spawn_blocking(move || -> Result<Value, Error> {
+                // Create provider
+                let mut registry = AF_PROVIDERS.lock().map_err(|e| anyhow!("{}", e))?;
+                let builder = registry.get_builder(&provider_id)
+                    .ok_or(anyhow!("Unknown provider: {}", provider_id))?;
+                let mut provider = builder.get_provider(&config)?;
+                drop(registry);
+
+                // Fetch catalog
+                let catalog = provider.fetch_catalog()?;
+
+                // Open cache
+                let cache_path = Settings::get_folder()?.join("af_sync_cache.db");
+                let cache = onetagger_autotag::af_sync_cache::AFSyncCache::open(&cache_path)?;
+                cache.cache_catalog(&provider_id, &catalog)?;
+
+                // If a path was given, match local files too
+                if let Some(ref p) = sync_path {
+                    let files = AudioFileInfo::get_file_list(p, incl_sub);
+                    let mut local_files = vec![];
+                    for file in &files {
+                        if let Ok(info) = AudioFileInfo::load_file(file, None, None) {
+                            let title = info.title().unwrap_or_default().to_string();
+                            let artist = info.artist().unwrap_or_default().to_string();
+                            local_files.push((file.clone(), title, artist));
+                        }
+                    }
+                    let report = onetagger_autotag::af_sync_cache::run_sync(
+                        &cache, &provider_id, &catalog, &local_files, 0.75,
+                    );
+                    return Ok(json!({
+                        "success": true,
+                        "catalogSize": catalog.len(),
+                        "matched": report.matched.len(),
+                        "unmatchedLocal": report.unmatched_local.len(),
+                        "unmatchedProvider": report.unmatched_provider.len(),
+                        "localTotal": report.local_total,
+                        "providerTotal": report.provider_total
+                    }));
+                }
+
+                Ok(json!({
+                    "success": true,
+                    "catalogSize": catalog.len(),
+                    "message": "Catalog cached. Run with a path to match local files."
+                }))
+            }).await?;
+            match result {
+                Ok(v) => {
+                    send_socket(websocket, json!({
+                        "action": "afSyncResult",
+                        "result": v
+                    })).await.ok();
+                },
+                Err(e) => {
+                    send_socket(websocket, json!({
+                        "action": "afSyncResult",
+                        "result": {
+                            "success": false,
+                            "message": format!("{}", e)
+                        }
+                    })).await.ok();
+                }
+            }
+        },
+        Action::AFConfigCallback { provider_id, callback_id, config } => {
+            let provider_id_clone = provider_id.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let mut registry = AF_PROVIDERS.lock().unwrap();
+                if let Some(builder) = registry.get_builder(&provider_id) {
+                    builder.config_callback(&callback_id, config)
+                } else {
+                    onetagger_tagger::ConfigCallbackResponse::Error {
+                        error: "Unknown provider".to_string()
+                    }
+                }
+            }).await?;
+            send_socket(websocket, json!({
+                "action": "afConfigCallback",
+                "provider": provider_id_clone,
+                "response": result
             })).await.ok();
         },
         Action::TagEditorFolder { path, subdir, recursive } => {

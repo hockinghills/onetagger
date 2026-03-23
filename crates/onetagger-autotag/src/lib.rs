@@ -33,6 +33,9 @@ mod shazam;
 pub mod repo;
 pub mod platforms;
 pub mod audiofeatures;
+pub mod af_providers;
+pub mod af_sync_cache;
+pub mod af_engine;
 
 // Re-exports
 pub use platforms::{AUTOTAGGER_PLATFORMS, AutotaggerPlatforms};

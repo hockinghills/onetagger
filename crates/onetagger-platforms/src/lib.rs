@@ -14,5 +14,6 @@ pub mod bpmsupreme;
 pub mod deezer;
 pub mod musixmatch;
 pub mod bandcamp;
+pub mod audiomuse;
 mod bandcamp_genres;
 
