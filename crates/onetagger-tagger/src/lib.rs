@@ -936,7 +936,65 @@ impl MatchingUtils {
     pub fn clean_title_matching(input: &str) -> String {
         let input = MatchingUtils::clean_title(input);
         let input = Self::clean_title_step6(&input);
+        let input = Self::clean_youtube_cruft(&input);
         Self::clean_title_step7(&input)
+    }
+
+    /// Remove YouTube/video platform cruft from titles.
+    /// Handles "(Official Music Video)", "(Official Video)", "(Lyric Video)",
+    /// "(Official Audio)", "(Live at ...)", "(Full Album Stream)", emoji,
+    /// fullwidth unicode quotes/slashes, and similar noise.
+    pub fn clean_youtube_cruft(input: &str) -> String {
+        // Normalize fullwidth unicode characters to ASCII equivalents
+        let mut out = input
+            .replace('＂', "\"")
+            .replace('⧸', "/")
+            .replace('（', "(")
+            .replace('）', ")")
+            .replace('\u{1f3ac}', "")  // 🎬
+            .replace('\u{1f3b5}', "")  // 🎵
+            .replace('\u{1f3b6}', "")  // 🎶
+            .replace('\u{1f525}', ""); // 🔥
+
+        // Case-insensitive removal of common YouTube suffixes
+        let patterns = [
+            // Video types
+            "(official music video)", "(official video)", "(official audio)",
+            "(music video)", "(lyric video)", "(lyrics video)", "(lyric)",
+            "(audio)", "(visualizer)", "(visualiser)",
+            "(official lyric video)", "(official visualizer)",
+            "(official)", "(video)", 
+            // Live/session variants
+            "(live)", "(acoustic)", "(live acoustic)",
+            "(acoustic version)", "(live version)", "(acoustic session)",
+            // Misc
+            "(full album stream)", "(bonus)", "(hd)", "(hq)",
+            "(remastered)", "(remaster)",
+            // Common without parens
+            "official music video", "official video", "official audio",
+            "music video",
+        ];
+
+        let lower = out.to_lowercase();
+        for pattern in &patterns {
+            if let Some(pos) = lower.find(pattern) {
+                out = format!("{}{}", &out[..pos], &out[pos + pattern.len()..]);
+            }
+        }
+
+        // Remove "| Something Sessions" or "| Sugarshack Sessions" etc
+        if let Some(pipe_pos) = out.find(" | ") {
+            out = out[..pipe_pos].to_string();
+        }
+        if let Some(pipe_pos) = out.find(" || ") {
+            out = out[..pipe_pos].to_string();
+        }
+
+        // Clean up double spaces and trim
+        while out.contains("  ") {
+            out = out.replace("  ", " ");
+        }
+        out.trim().to_string()
     }
 
     /// Clean artist for searching on platforms

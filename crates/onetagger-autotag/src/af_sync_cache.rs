@@ -393,6 +393,70 @@ pub fn run_sync(
         }
     }
 
+    info!("[AF Sync] Pass 1 complete: {} matched, {} unmatched",
+        matched.len(), unmatched_local.len());
+
+    // === Pass 2: Retry unmatched at lower threshold (0.55) ===
+    // This catches files where YouTube cruft or naming differences
+    // made the score drop just below the normal threshold.
+    if !unmatched_local.is_empty() {
+        let lower_threshold = 0.55;
+        info!("[AF Sync] Pass 2: Retrying {} unmatched files at threshold {:.2}...",
+            unmatched_local.len(), lower_threshold);
+
+        let mut still_unmatched = vec![];
+        let mut pass2_matched = 0;
+
+        for path in &unmatched_local {
+            // Re-read the local file info for this path from the original list
+            let local_entry = local_files.iter().find(|(p, _, _)| p == path);
+            if local_entry.is_none() {
+                still_unmatched.push(path.clone());
+                continue;
+            }
+            let (_, local_title, local_artist) = local_entry.unwrap();
+            let clean_local_title = MatchingUtils::clean_title_matching(local_title);
+            let local_artist_lower = local_artist.to_lowercase();
+
+            // This time, search the ENTIRE catalog (no pre-filter)
+            // since the pre-filter might have excluded the right match
+            let mut best_match: Option<(usize, f64)> = None;
+            for (idx, (_, _, _, ref clean_prov_title, ref prov_artist_lower)) in cleaned_catalog.iter().enumerate() {
+                let title_sim = strsim::normalized_levenshtein(&clean_local_title, clean_prov_title);
+                let artist_sim = strsim::normalized_levenshtein(&local_artist_lower, prov_artist_lower);
+                let combined = (title_sim * 0.6) + (artist_sim * 0.4);
+
+                if combined >= lower_threshold {
+                    if best_match.is_none() || combined > best_match.unwrap().1 {
+                        best_match = Some((idx, combined));
+                    }
+                }
+            }
+
+            if let Some((idx, confidence)) = best_match {
+                let (ref prov_id, ref prov_title, ref prov_artist, _, _) = cleaned_catalog[idx];
+                let _ = cache.set_mapping(
+                    path,
+                    provider_id,
+                    prov_id,
+                    Some(local_title),
+                    Some(local_artist),
+                    Some(prov_title),
+                    Some(prov_artist),
+                    confidence,
+                );
+                matched.push((path.clone(), prov_id.to_string()));
+                matched_provider_ids.insert(prov_id.to_string());
+                pass2_matched += 1;
+            } else {
+                still_unmatched.push(path.clone());
+            }
+        }
+
+        info!("[AF Sync] Pass 2 recovered {} additional matches", pass2_matched);
+        unmatched_local = still_unmatched;
+    }
+
     info!("[AF Sync] Complete: {} matched, {} unmatched local, {} orphaned provider",
         matched.len(), unmatched_local.len(),
         catalog.len() - matched_provider_ids.len());
